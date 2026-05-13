@@ -1,0 +1,16 @@
+# Build output — regenerable via deploy/build_wasm.sh
+dist/
+dist_html/
+
+# Vendored third-party JS — downloaded by build_wasm.sh on first run.
+# CI re-fetches at build time; not committed to keep the repo small.
+public/vendor/
+
+# Python cruft
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# OS cruft
+.DS_Store
+Thumbs.db

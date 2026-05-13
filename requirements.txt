@@ -1,0 +1,19 @@
+# Runtime dependencies for the citation-network notebook.
+#
+# marimo is pinned to a minor range — the WASM export format and the
+# anywidget surface change across minor releases, so allowing a 0.24+
+# bump without a build smoke-test is risky. Re-test before relaxing.
+marimo>=0.23,<0.24
+
+# In-notebook data layer (loaded inside the Pyodide WASM kernel too).
+pandas>=2.0
+numpy>=1.24
+networkx>=3.0
+
+# Static-PNG renderer (host-side only; not bundled into the WASM kernel).
+matplotlib>=3.7
+
+# Refresh-only — used by extract.py against the private portfolio.duckdb.
+# Safe to omit when building from committed CSVs (pass --skip-extract
+# to deploy/build_wasm.sh).
+duckdb>=0.10

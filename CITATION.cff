@@ -1,0 +1,93 @@
+cff-version: 1.2.0
+message: "If you use this citation network or its underlying lineage data, please cite as below."
+title: "The Banister Constellation: a citation network of the fitness-fatigue model lineage"
+abstract: >-
+  An interactive visualization of fifty years of fitness-fatigue model (FFM)
+  literature, anchored on Banister 1975 and Calvert 1976. 175 papers across
+  classical, variable-dose, statistical-critique, Bayesian-hierarchical, and
+  PerPot branches, with a 14-paper Banister lineage chain reconstructed from
+  parent_doi annotations.
+authors:
+  - family-names: Bowie
+    given-names: Jacob
+    orcid: "https://orcid.org/0000-0000-0000-0000"
+    affiliation: "University of Connecticut"
+type: software
+license: MIT
+license-url: "https://opensource.org/licenses/MIT"
+url: "https://github.com/JacobBowie/citation-network"
+version: 0.1.0
+date-released: "2026-05-13"
+keywords:
+  - fitness-fatigue model
+  - citation network
+  - sport science
+  - resistance training
+  - Bayesian hierarchical models
+  - bibliometrics
+  - interactive visualization
+references:
+  - type: article
+    title: "A systems model of training for athletic performance"
+    authors:
+      - family-names: Banister
+        given-names: "E. W."
+      - family-names: Calvert
+        given-names: "T. W."
+      - family-names: Savage
+        given-names: "M. V."
+      - family-names: Bach
+        given-names: "T."
+    year: 1975
+    journal: "Australian Journal of Sports Medicine"
+    volume: 7
+    start: 57
+    end: 61
+  - type: article
+    title: "A systems model of the effects of training on physical performance"
+    authors:
+      - family-names: Calvert
+        given-names: "T. W."
+      - family-names: Banister
+        given-names: "E. W."
+      - family-names: Savage
+        given-names: "M. V."
+      - family-names: Bach
+        given-names: "T."
+    year: 1976
+    journal: "IEEE Transactions on Systems, Man, and Cybernetics"
+    volume: "SMC-6"
+    issue: 2
+    start: 94
+    end: 102
+    doi: "10.1109/tsmc.1976.5409179"
+  - type: article
+    title: "Modelling the residual effects and threshold saturation of training: a case study of Olympic swimmers"
+    authors:
+      - family-names: Hellard
+        given-names: "P."
+      - family-names: Avalos
+        given-names: "M."
+      - family-names: Millet
+        given-names: "G."
+      - family-names: Lacoste
+        given-names: "L."
+      - family-names: Barale
+        given-names: "F."
+      - family-names: Chatard
+        given-names: "J.-C."
+    year: 2005
+    journal: "Journal of Strength and Conditioning Research"
+    volume: 19
+    issue: 1
+    start: 67
+    end: 75
+  - type: article
+    title: "Statistical flaws of the fitness-fatigue sports performance prediction model"
+    authors:
+      - family-names: Marchal
+        given-names: "T."
+      - family-names: Imbach
+        given-names: "F."
+    year: 2025
+    journal: "Scientific Reports"

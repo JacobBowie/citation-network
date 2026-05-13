@@ -1,0 +1,94 @@
+---
+title: "The Banister Constellation"
+subtitle: "A citation network of the fitness-fatigue model lineage"
+image: assets/hero.png
+description: >
+  Fifty years of fitness-fatigue model (FFM) literature in one constellation.
+  Anchored on Banister 1975 + Calvert 1976; 175 papers across classical,
+  variable-dose, statistical-critique, and Bayesian-hierarchical branches,
+  with a 14-paper Banister lineage chain reconstructed from parent_doi
+  annotations.
+date: "2026-05-13"
+categories:
+  - interactive
+  - citation graph
+  - sport science
+  - fitness-fatigue model
+format:
+  html:
+    page-layout: full
+    include-in-header:
+      - file: og_metadata.html
+---
+
+![The Banister Constellation — 50 years of fitness-fatigue model literature.](assets/hero.png){fig-alt="Constellation diagram of 175 papers in the FFM literature, with Banister 1975 at the top and modern Bayesian extensions at the bottom" width=100%}
+
+## What this is
+
+In 1975, Eric Banister sketched a two-stock model — Fitness and Fatigue —
+that turned every training session into a pulse of stimulus, every adaptation
+into an exponential decay, and every performance prediction into the
+difference of two convolutions. The math fit on a napkin. Fifty years later,
+that napkin underwrites everything from elite-endurance taper planning to
+the Bayesian hierarchical models I use in my dissertation.
+
+This visualization is the family tree.
+
+Every node is a paper. Every edge is a citation, drawn from the local
+[`getpaid`](https://github.com/JacobBowie/getpaid) literature pipeline
+(Semantic Scholar forward citations + CrossRef references). The **gold halos**
+mark the 14-paper Banister lineage — the direct chain of authorship from the
+1975 systems-model paper through the 2025 Bayesian-hierarchical critiques.
+**Colors** code the methodological family: classical Banister-Calvert,
+Busso's variable-dose extensions, the statistical-critique line, the
+PerPot metamodel, and the recent Bayesian-hierarchical wave.
+
+What the constellation reveals — and what I find most useful about it — is
+the *sparsity* of internal citation. The FFM literature is not a tightly
+woven graph. It's a small number of foundational papers, a long tail of
+isolated re-derivations, and a recent dense cluster of statistical
+re-evaluations (Marchal 2025, Hellard 2006, Imbach 2022) that converge on
+the same conclusion: the single-subject FFM is ill-conditioned, and the path
+forward is hierarchical partial pooling.
+
+## Try it
+
+[**Open the interactive →**](/citation-network/interactive/){.btn .btn-primary role="button"}
+
+::: {.callout-note}
+The interactive renders in your browser via [vis-network](https://visjs.github.io/vis-network/docs/network/).
+Drag to pan, scroll to zoom, hover any node for the paper title, authors, venue, and citation count.
+Toggle the **Lineage only** button to isolate the 14-paper Banister chain.
+:::
+
+For visitors who want to fork the source-editing experience, the marimo
+notebook is also available at
+[/citation-network/notebook/](/citation-network/notebook/) — though Pyodide
+cold-start is ~30-60 s on first visit.
+
+## How it was built
+
+```
+canonical_ffm_seeds.csv  ── 25 curated FFM founding papers
+       │
+       └─ extract.py ─── DuckDB (portfolio.duckdb)
+                ├── forward citations (Semantic Scholar)
+                ├── backward references (CrossRef)
+                └── extension-family inference (which seeds did this paper link to?)
+                          │
+                          └─ public/data/{nodes,edges}.csv
+                                    │
+                                    ├─ notebook.py (marimo + vis-network)  →  WASM bundle
+                                    ├─ build_html.py                       →  standalone HTML
+                                    └─ render_static.py (matplotlib)       →  hero + social cards
+```
+
+The trunk is curated — 25 founding-equation papers anchored on Banister 1975
+and Calvert 1976, tagged with `family` (classical / variable-dose /
+statistical-critique / Bayesian-hierarchical / PerPot / review) and linked
+to their direct intellectual parent. The extension layer is automatically
+expanded: for each trunk paper, pull the top-150 most-linked neighbors from
+my local citation index, infer each extension's "best-matching family" from
+the trunk papers it cites most, and render the result.
+
+[Source: `JacobBowie/citation-network`](https://github.com/JacobBowie/citation-network) · MIT (code) + CC-BY-4.0 (data)

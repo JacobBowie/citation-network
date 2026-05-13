@@ -1,0 +1,66 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+
+      - name: Vendor vis-network (CI builds from upstream)
+        run: |
+          mkdir -p public/vendor
+          curl -sSL -o public/vendor/vis-network-9.1.9.min.js \
+            https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js
+          test -s public/vendor/vis-network-9.1.9.min.js
+
+      - name: Run schema / invariant tests
+        run: pytest tests/ -v
+
+      - name: Build standalone HTML (no DB required)
+        run: python build_html.py --out dist/standalone.html
+
+      - name: Build WASM bundle
+        run: bash deploy/build_wasm.sh --skip-extract
+
+      - name: Render static PNG (hero + social cards)
+        run: python render_static.py
+
+      - name: Bundle release artifacts
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          tar -czf citation-network-wasm.tar.gz -C dist .
+          tar -czf citation-network-standalone.tar.gz -C dist standalone.html public/
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            citation-network-wasm.tar.gz
+            citation-network-standalone.tar.gz
+            dist_static/citation_network.png
+            dist_static/citation_network_card.png
+            dist_static/citation_network_card_labeled.png
+          generate_release_notes: true
