@@ -1,0 +1,42 @@
+<!-- Injected into the WASM notebook's <head> via marimo.App(html_head_file=...).
+     Shows a loading message during the 30-60 s Pyodide cold start, which is
+     otherwise a blank page. Removed once the first cell renders (the notebook's
+     h1 appears under #root), with a 150 s failsafe so it can never stick. -->
+<style>
+#cn-loading{position:fixed;inset:0;z-index:2147483000;display:flex;align-items:center;justify-content:center;
+  padding:16px;background:#0E1117;color:#E8E8EA;text-align:center;
+  font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;transition:opacity .4s ease}
+#cn-loading.cn-done{opacity:0;pointer-events:none}
+#cn-loading .cn-box{max-width:420px}
+#cn-loading .cn-spin{width:28px;height:28px;margin:0 auto 14px;border:3px solid #2a3142;
+  border-top-color:#E8E8EA;border-radius:50%;animation:cn-spin 1s linear infinite}
+#cn-loading small{display:block;margin-top:6px;color:#9AA3B8}
+@keyframes cn-spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){#cn-loading .cn-spin{animation:none}}
+</style>
+<script>
+(function () {
+  function mount() {
+    if (document.getElementById("cn-loading")) return;
+    var el = document.createElement("div");
+    el.id = "cn-loading";
+    el.setAttribute("role", "status");
+    el.innerHTML = '<div class="cn-box"><div class="cn-spin" aria-hidden="true"></div>' +
+      "<div>Loading the Banister Constellation notebook…</div>" +
+      "<small>It runs Python entirely in your browser, so the first load takes 30 to 60 seconds.</small></div>";
+    document.body.appendChild(el);
+    var finished = false;
+    var obs = new MutationObserver(function () { if (document.querySelector("#root h1")) done(); });
+    function done() {
+      if (finished) return;
+      finished = true;
+      obs.disconnect();
+      el.classList.add("cn-done");
+      setTimeout(function () { el.remove(); }, 600);
+    }
+    obs.observe(document.body, { childList: true, subtree: true });
+    setTimeout(done, 150000);
+  }
+  if (document.body) mount(); else document.addEventListener("DOMContentLoaded", mount);
+})();
+</script>
