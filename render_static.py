@@ -1,13 +1,24 @@
 """Static PNG renderer for the FFM citation network.
 
-Reads the same nodes.csv / edges.csv that the interactive viz uses,
-renders a static PNG matching the constellation aesthetic. Useful as a
-portfolio thumbnail, social card, or teaser before the interactive ships.
+Reads the same nodes.csv / edges.csv that the interactive viz uses and
+renders the constellation as static PNGs for the portfolio hero, the
+homepage tile, and the social cards.
+
+Layout: y is pinned to publication year (1975 at the top). x comes from a
+spring layout, then each 5-year band is rank-spread across a width that
+grows with the band's paper count, so the sparse early decades stay a
+narrow trunk and the graph widens as the field grows. A greedy pass keeps
+nodes from overlapping.
+
+Encoding: Okabe-Ito color plus a marker shape per family (never color
+alone); the Banister lineage is a white ring, white links and a soft halo.
 
 Usage:
     python render_static.py
-    # → writes dist_static/citation_network.png  (1600x1200, hero)
-    # → writes dist_static/citation_network_card.png  (1200x630, social)
+    # -> dist_static/citation_network.png               (1600x1200, hero)
+    # -> dist_static/citation_network_tile.png          (1600x900, 16:9 tile)
+    # -> dist_static/citation_network_card.png          (1200x630, social)
+    # -> dist_static/citation_network_card_labeled.png  (1200x630, lineage labels)
 """
 from __future__ import annotations
 
@@ -15,38 +26,73 @@ import csv
 import math
 from pathlib import Path
 
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-import networkx as nx
-import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+import networkx as nx  # noqa: E402
+import numpy as np  # noqa: E402
+from adjustText import adjust_text  # noqa: E402
+from matplotlib.collections import LineCollection  # noqa: E402
+from matplotlib.lines import Line2D  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "public" / "data"
 OUT = HERE / "dist_static"
+DPI = 100
 
 BG = "#0E1117"
 FG = "#E8E8EA"
-HALO_GOLD = "#FFC850"
-EDGE_AUTO = "#5a6377"
-EDGE_MANUAL = "#FFC850"
+LABEL_INK = "#C9CED8"
+MUTED = "#9AA3B8"
+GRID = "#5A6377"
+LINEAGE = "#FFFFFF"
 
+# Okabe-Ito (Wong 2011), CVD-safe on the dark canvas. Every family also gets
+# its own marker shape, so identity never rests on color alone.
 FAMILY_COLOR = {
-    "classical":            "#E64B35",
-    "variable_dose":        "#3C5488",
-    "perpot":               "#4DBBD5",
-    "rt_specific":          "#00A087",
-    "statistical_critique": "#F39B7F",
-    "bayesian_hier":        "#8491B4",
-    "review":               "#B09C85",
-    "extended":             "#7E6148",
-    "uncategorized":        "#999999",
+    "classical":            "#E69F00",
+    "variable_dose":        "#56B4E9",
+    "other":                "#CC79A7",
+    "statistical_critique": "#D55E00",
+    "bayesian_hier":        "#F0E442",
+    "review":               "#009E73",
 }
+FAMILY_MARKER = {
+    "classical": "o", "variable_dose": "s", "other": "v",
+    "statistical_critique": "^", "bayesian_hier": "D", "review": "h",
+}
+FAMILY_NAME = {
+    "classical": "Classical", "variable_dose": "Variable dose", "other": "Other models",
+    "statistical_critique": "Statistical critique", "bayesian_hier": "Bayesian", "review": "Review",
+}
+# One-node families share the "Other models" slot (Okabe-Ito has 6 dark-safe hues).
+FAMILY_GROUP = {"perpot": "other", "rt_specific": "other"}
+FAMILY_ORDER = ["classical", "variable_dose", "other", "statistical_critique", "bayesian_hier", "review"]
+
 ANCHOR_DOIS = {"manual:banister1975", "10.1109/tsmc.1976.5409179"}
 YEAR_MIN, YEAR_MAX = 1974, 2026
+
+# Output canvases in px. top = title + legend strip, left = year labels.
+SPECS = {
+    "hero": dict(W=1600, H=1200, left=78, right=28, top=150, bottom=34, title=22, sub=12,
+                 legend=9.8, year=10, label=9.5, size_k=1.0, chrome=True),
+    "tile": dict(W=1600, H=900, left=96, right=24, top=40, bottom=20, title=0, sub=0,
+                 legend=0, year=20, label=24, size_k=1.25, chrome=False),
+    "card": dict(W=1200, H=630, left=64, right=20, top=118, bottom=18, title=24, sub=12.5,
+                 legend=10.2, year=10.5, label=10, size_k=0.8, chrome=True),
+}
 
 
 def _to_bool(s: str) -> bool:
     return str(s).strip().lower() in ("true", "1", "yes", "t")
+
+
+def _short_label(lbl: str) -> str:
+    """Display-only cleanup: 'J. Borresen 2009' -> 'Borresen 2009'; keeps 'Thomas & Busso 2008'."""
+    toks = lbl.split()
+    if "&" in toks or len(toks) <= 2 or not toks[-1].isdigit():
+        return lbl
+    return f"{toks[-2]} {toks[-1]}"
 
 
 def load() -> tuple[list[dict], list[dict]]:
@@ -56,9 +102,9 @@ def load() -> tuple[list[dict], list[dict]]:
         edges = list(csv.DictReader(f))
     for n in nodes:
         try:
-            n["_year"] = int(n["year"]) if n["year"] else None
+            n["_year"] = int(n["year"]) if n["year"] else (YEAR_MIN + YEAR_MAX) // 2
         except ValueError:
-            n["_year"] = None
+            n["_year"] = (YEAR_MIN + YEAR_MAX) // 2
         try:
             n["_cites"] = int(n["citation_count"]) if n["citation_count"] else 0
         except ValueError:
@@ -67,184 +113,211 @@ def load() -> tuple[list[dict], list[dict]]:
         n["_is_lineage"] = _to_bool(n["is_banister_lineage"])
         n["_is_anchor"] = n["doi"] in ANCHOR_DOIS
         ext_fam = (n.get("extension_family") or "").strip()
-        n["_effective_family"] = n["family"] if n["_is_seed"] else (ext_fam or "extended")
+        eff = n["family"] if n["_is_seed"] else (ext_fam or "extended")
+        n["_effective_family"] = FAMILY_GROUP.get(eff, eff)
+        n["_label"] = _short_label(n["label"])
     return nodes, edges
 
 
-def compute_layout(nodes: list[dict], edges: list[dict], width: float, height: float, seed: int = 7) -> dict:
-    """y = pinned by year (older top, newer bottom); x = spring-layout spread."""
+def _node_size(n: dict, k: float) -> float:
+    """Marker area (pt^2), log-scaled by citations; lineage gets a floor since
+    most founding papers carry no citation count in the index."""
+    s = 60 + 220 * math.log10(n["_cites"] + 1) / math.log10(2001)
+    if n["_is_anchor"]:
+        s += 110
+    elif n["_is_lineage"]:
+        s = max(s + 30, 170)
+    elif n["_is_seed"]:
+        s += 24
+    return s * k
+
+
+def _radius_px(s: float) -> float:
+    return 0.5 * math.sqrt(s) * DPI / 72
+
+
+def _priority(n: dict):
+    return (not n["_is_anchor"], not n["_is_lineage"], not n["_is_seed"], -n["_cites"], n["_year"])
+
+
+def _year_y(yr: int, ah: float, pad: float) -> float:
+    return pad + (ah - 2 * pad) * (1 - (yr - YEAR_MIN) / (YEAR_MAX - YEAR_MIN))
+
+
+def compute_layout(nodes: list[dict], edges: list[dict], aw: float, ah: float,
+                   pad: float = 14, seed: int = 7) -> dict:
+    """Positions in axes pixels. y = year; x = spring layout, rank-spread per
+    5-year band over a count-scaled width, then de-overlapped."""
     G = nx.Graph()
-    for n in nodes:
-        G.add_node(n["doi"])
-    for e in edges:
-        if e["source"] in G and e["target"] in G:
-            G.add_edge(e["source"], e["target"])
-
+    G.add_nodes_from(n["doi"] for n in nodes)
+    G.add_edges_from((e["source"], e["target"]) for e in edges
+                     if e["source"] in G and e["target"] in G)
     rng = np.random.default_rng(seed)
-    init = {}
-    for n in nodes:
-        yr = n["_year"] if n["_year"] is not None else (YEAR_MIN + YEAR_MAX) // 2
-        y_norm = (yr - YEAR_MIN) / (YEAR_MAX - YEAR_MIN)
-        init[n["doi"]] = np.array([rng.uniform(-0.6, 0.6), 1.0 - y_norm], dtype=float)
+    init = {n["doi"]: np.array([rng.uniform(-0.6, 0.6),
+                                1 - (n["_year"] - YEAR_MIN) / (YEAR_MAX - YEAR_MIN)])
+            for n in nodes}
+    sp = nx.spring_layout(G, pos=init, k=0.85 / math.sqrt(max(len(G), 1)),
+                          iterations=200, seed=seed)
 
-    pos = nx.spring_layout(
-        G, pos=init, k=0.85 / math.sqrt(max(len(G), 1)),
-        iterations=200, seed=seed, weight=None,
-    )
+    xs = np.array([sp[n["doi"]][0] for n in nodes])
+    x_lo, x_hi = xs.min(), xs.max()
+    bands: dict[int, list[dict]] = {}
     for n in nodes:
-        yr = n["_year"] if n["_year"] is not None else (YEAR_MIN + YEAR_MAX) // 2
-        y_norm = (yr - YEAR_MIN) / (YEAR_MAX - YEAR_MIN)
-        x, _ = pos[n["doi"]]
-        pos[n["doi"]] = np.array([x * width, (1.0 - y_norm) * height])
+        bands.setdefault((n["_year"] - YEAR_MIN) // 5, []).append(n)
+    pref = {}
+    for members in bands.values():
+        members.sort(key=lambda n: sp[n["doi"]][0])
+        k = len(members)
+        width = min(0.92, 0.12 + 0.03 * k) * aw
+        center = 0.04 * aw + (np.mean([sp[n["doi"]][0] for n in members]) - x_lo) / (x_hi - x_lo) * 0.92 * aw
+        center = aw / 2 + (center - aw / 2) * min(1.0, k / 30)  # sparse bands -> centered trunk
+        left = min(max(center - width / 2, 0.04 * aw), 0.96 * aw - width)
+        for i, n in enumerate(members):
+            pref[n["doi"]] = left + ((i + 0.5) / k if k > 1 else 0.5) * width
+
+    # Greedy de-overlap: each node takes the free x nearest its preferred x.
+    pos, placed, gap = {}, [], 2.5
+    for n in sorted(nodes, key=_priority):
+        r, y = n["_r"], _year_y(n["_year"], ah, pad)
+        best, best_ov = None, None
+        for c in sorted(np.linspace(r + 1, aw - r - 1, 160), key=lambda c: abs(c - pref[n["doi"]])):
+            ov = 0.0
+            for (px, py, pr) in placed:
+                need = r + pr + gap
+                if abs(y - py) < need and abs(c - px) < need:
+                    d = math.hypot(c - px, y - py)
+                    if d < need:
+                        ov += need - d
+            if ov == 0:
+                best = c
+                break
+            if best_ov is None or ov < best_ov:
+                best, best_ov = c, ov
+        placed.append((best, y, r))
+        pos[n["doi"]] = (best, y)
     return pos
 
 
-def render(out_path: Path, w_in: float, h_in: float, dpi: int,
-           show_legend: bool = True, show_labels: bool = True,
-           label_threshold: int | None = None) -> None:
+def _labeled(nodes: list[dict], mode: str) -> list[dict]:
+    lineage = [n for n in nodes if n["_is_lineage"]]
+    if mode == "lineage_top8":
+        top = sorted([n for n in nodes if not n["_is_lineage"]], key=lambda n: -n["_cites"])[:8]
+        return lineage + top
+    if mode == "lineage":
+        return lineage
+    if mode == "anchor":
+        return [n for n in nodes if n["doi"] == "manual:banister1975"]
+    return []
+
+
+def render(out_path: Path, kind: str, labels: str) -> None:
+    sp = SPECS[kind]
+    W, H = sp["W"], sp["H"]
     nodes, edges = load()
-    width_units, height_units = w_in * dpi / 100, h_in * dpi / 100
-    pos = compute_layout(nodes, edges, width=width_units * 0.75, height=height_units * 0.82)
+    for n in nodes:
+        n["_s"] = _node_size(n, sp["size_k"])
+        n["_r"] = _radius_px(n["_s"])
 
-    fig, ax = plt.subplots(figsize=(w_in, h_in), dpi=dpi, facecolor=BG)
-    ax.set_facecolor(BG)
+    fig = plt.figure(figsize=(W / DPI, H / DPI), dpi=DPI, facecolor=BG)
+    aw, ah = W - sp["left"] - sp["right"], H - sp["top"] - sp["bottom"]
+    ax = fig.add_axes([sp["left"] / W, sp["bottom"] / H, aw / W, ah / H])
+    ax.set_xlim(0, aw)
+    ax.set_ylim(0, ah)
+    ax.axis("off")
+    pad = 14
+    pos = compute_layout(nodes, edges, aw, ah, pad)
 
-    edge_lookup = {n["doi"]: n for n in nodes}
-    auto_segs, manual_segs = [], []
+    for yr in (1975, 1985, 1995, 2005, 2015, 2025):
+        y = _year_y(yr, ah, pad)
+        ax.axhline(y, color=GRID, lw=0.6, alpha=0.22, zorder=0.5)
+        ax.text(-10, y, str(yr), color=MUTED, fontsize=sp["year"], ha="right", va="center", clip_on=False)
+
+    auto, lineage = [], []
     for e in edges:
-        if e["source"] not in edge_lookup or e["target"] not in edge_lookup:
-            continue
-        x0, y0 = pos[e["source"]]
-        x1, y1 = pos[e["target"]]
-        seg = [(x0, y0), (x1, y1)]
-        if e["kind"] == "manual":
-            manual_segs.append(seg)
-        else:
-            auto_segs.append(seg)
+        if e["source"] in pos and e["target"] in pos:
+            seg = [pos[e["source"]], pos[e["target"]]]
+            (lineage if e["kind"] == "manual" else auto).append(seg)
+    ax.add_collection(LineCollection(auto, colors=GRID, linewidths=0.45 * sp["size_k"], alpha=0.22, zorder=1))
+    ax.add_collection(LineCollection(lineage, colors=LINEAGE, linewidths=1.9 * sp["size_k"], alpha=0.85, zorder=2))
 
-    from matplotlib.collections import LineCollection
-    if auto_segs:
-        ax.add_collection(LineCollection(auto_segs, colors=EDGE_AUTO,
-                                          linewidths=0.4, alpha=0.32, zorder=1))
-    if manual_segs:
-        ax.add_collection(LineCollection(manual_segs, colors=EDGE_MANUAL,
-                                          linewidths=1.6, alpha=0.7, zorder=2))
+    lin = [n for n in nodes if n["_is_lineage"]]
+    ax.scatter([pos[n["doi"]][0] for n in lin], [pos[n["doi"]][1] for n in lin],
+               s=[n["_s"] * (2.6 if n["_is_anchor"] else 2.0) for n in lin],
+               c=LINEAGE, alpha=0.16, linewidths=0, zorder=3)
 
-    halo_x, halo_y, halo_s = [], [], []
-    for n in nodes:
-        if not n["_is_lineage"]:
-            continue
-        x, y = pos[n["doi"]]
-        halo_x.append(x); halo_y.append(y)
-        base = 200 + 380 * math.log10(n["_cites"] + 1) / math.log10(2001)
-        halo_s.append(base * (2.2 if n["_is_anchor"] else 1.6))
-    if halo_x:
-        ax.scatter(halo_x, halo_y, s=halo_s, c=HALO_GOLD, alpha=0.22,
-                   linewidths=0, zorder=3)
-
-    ext_xs, ext_ys, ext_colors, ext_sizes = [], [], [], []
-    seed_xs, seed_ys, seed_colors, seed_sizes, seed_edges, seed_widths = [], [], [], [], [], []
-    anchor_xs, anchor_ys = [], []
-    for n in nodes:
-        x, y = pos[n["doi"]]
-        size_base = 60 + 220 * math.log10(n["_cites"] + 1) / math.log10(2001)
-        if n["_is_anchor"]:
-            size_base += 90
-        elif n["_is_seed"]:
-            size_base += 24
-        color = FAMILY_COLOR.get(n["_effective_family"], "#999999")
-        if n["_is_seed"]:
-            seed_xs.append(x); seed_ys.append(y); seed_colors.append(color); seed_sizes.append(size_base)
-            seed_edges.append(HALO_GOLD if n["_is_lineage"] else "#FFFFFF")
-            seed_widths.append(2.4 if n["_is_anchor"] else (1.8 if n["_is_lineage"] else 1.0))
-            if n["_is_anchor"]:
-                anchor_xs.append(x); anchor_ys.append(y)
-        else:
-            ext_xs.append(x); ext_ys.append(y)
-            ext_colors.append(color); ext_sizes.append(size_base)
-
-    if ext_xs:
-        ax.scatter(ext_xs, ext_ys, s=ext_sizes, c=ext_colors, alpha=0.55,
-                   linewidths=0.4, edgecolors="#FFFFFF", zorder=4)
-    if seed_xs:
-        ax.scatter(seed_xs, seed_ys, s=seed_sizes, c=seed_colors,
-                   linewidths=seed_widths, edgecolors=seed_edges, zorder=5)
-    if anchor_xs:
-        ax.scatter(anchor_xs, anchor_ys, s=300, c=HALO_GOLD, marker="*",
-                   linewidths=1.2, edgecolors="#FFFFFF", zorder=6)
-
-    if show_labels:
-        for n in nodes:
-            if not (n["_is_seed"] or n["_is_anchor"]):
+    for fam in FAMILY_ORDER:
+        for tier in ("ext", "seed", "lin"):
+            grp = [n for n in nodes if n["_effective_family"] == fam and not n["_is_anchor"] and
+                   ("lin" if n["_is_lineage"] else "seed" if n["_is_seed"] else "ext") == tier]
+            if not grp:
                 continue
+            ax.scatter([pos[n["doi"]][0] for n in grp], [pos[n["doi"]][1] for n in grp],
+                       s=[n["_s"] for n in grp], c=FAMILY_COLOR[fam], marker=FAMILY_MARKER[fam],
+                       alpha={"ext": 0.72, "seed": 1.0, "lin": 1.0}[tier],
+                       edgecolors={"ext": BG, "seed": BG, "lin": LINEAGE}[tier],
+                       linewidths={"ext": 0.8, "seed": 1.2, "lin": 2.2}[tier] * sp["size_k"],
+                       zorder={"ext": 4, "seed": 5, "lin": 5.5}[tier])
+    anchors = [n for n in nodes if n["_is_anchor"]]
+    ax.scatter([pos[n["doi"]][0] for n in anchors], [pos[n["doi"]][1] for n in anchors],
+               s=[n["_s"] * 1.5 for n in anchors], c=LINEAGE, marker="*", edgecolors=BG,
+               linewidths=1.0, zorder=6)
+
+    texts = []
+    if labels == "anchor":
+        # Tile: one big label, set left of the founding star so it can't sit on it.
+        for n in _labeled(nodes, labels):
             x, y = pos[n["doi"]]
-            ax.annotate(
-                n["label"], xy=(x, y), xytext=(0, 11), textcoords="offset points",
-                ha="center", va="bottom", fontsize=8.5,
-                color=FG if not n["_is_anchor"] else HALO_GOLD,
-                fontweight="bold" if n["_is_anchor"] else "normal",
-                zorder=7,
-                bbox=dict(boxstyle="round,pad=0.18", facecolor=BG, edgecolor="none", alpha=0.7),
-            )
+            ax.text(x - n["_r"] * 1.6 - 8, y, n["_label"], ha="right", va="center", fontsize=sp["label"],
+                    color=FG, fontweight="bold", zorder=7,
+                    bbox=dict(boxstyle="round,pad=0.15", fc=BG, ec="none", alpha=0.78))
+        labels = "none"
+    for n in _labeled(nodes, labels):
+        x, y = pos[n["doi"]]
+        texts.append(ax.text(
+            x, y + n["_r"] + 3, n["_label"], ha="center", va="bottom", fontsize=sp["label"],
+            color=FG if n["_is_lineage"] else LABEL_INK,
+            fontweight="bold" if n["_is_lineage"] else "normal", zorder=7,
+            bbox=dict(boxstyle="round,pad=0.15", fc=BG, ec="none", alpha=0.78)))
+    overlaps = 0
+    if texts:
+        # iter_lim, not time_lim: a time budget makes label placement depend on
+        # how fast the machine is, so CI and local renders could differ.
+        adjust_text(texts, x=[p[0] for p in pos.values()], y=[p[1] for p in pos.values()], ax=ax,
+                    expand=(1.08, 1.25), ensure_inside_axes=True, iter_lim=1000,
+                    arrowprops=dict(arrowstyle="-", color=MUTED, lw=0.6, alpha=0.8))
+        rend = fig.canvas.get_renderer()
+        boxes = [t.get_window_extent(rend) for t in texts]
+        overlaps = sum(boxes[i].overlaps(boxes[j])
+                       for i in range(len(boxes)) for j in range(i + 1, len(boxes)))
 
-    for yr in [1975, 1985, 1995, 2005, 2015, 2025]:
-        y_pos = (1.0 - (yr - YEAR_MIN) / (YEAR_MAX - YEAR_MIN)) * height_units * 0.82
-        ax.axhline(y=y_pos, color="#5a6377", linewidth=0.5, alpha=0.18, zorder=0)
-        ax.text(-width_units * 0.405, y_pos, str(yr), color="#7a8499",
-                fontsize=9, va="center", ha="right", zorder=8,
-                bbox=dict(boxstyle="round,pad=0.2", facecolor=BG, edgecolor="none", alpha=0.6))
+    if sp["chrome"]:
+        fig.text(sp["left"] / W, 1 - 18 / H, "The Banister Constellation", ha="left", va="top",
+                 fontsize=sp["title"], fontweight="bold", color=FG)
+        fig.text(sp["left"] / W, 1 - (24 + sp["title"] * 1.5) / H,
+                 f"{len(nodes)} papers, 50 years of fitness-fatigue model research. "
+                 "Top = 1975, bottom = 2025.",
+                 ha="left", va="top", fontsize=sp["sub"], color=MUTED)
+        handles = [Line2D([], [], ls="", marker=FAMILY_MARKER[f], ms=8, mfc=FAMILY_COLOR[f], mec=BG,
+                          label=FAMILY_NAME[f]) for f in FAMILY_ORDER]
+        handles.append(Line2D([], [], color=LINEAGE, lw=2, marker="o", ms=8, mfc="none", mec=LINEAGE,
+                              label="Banister lineage"))
+        fig.legend(handles=handles, loc="upper left", ncol=len(handles), frameon=False,
+                   bbox_to_anchor=(sp["left"] / W - 0.006, 1 - (sp["top"] - 34) / H),
+                   fontsize=sp["legend"], labelcolor=FG, handletextpad=0.3, columnspacing=1.1)
 
-    ax.set_xlim(-width_units * 0.42, width_units * 0.42)
-    ax.set_ylim(-height_units * 0.05, height_units * 0.87)
-    ax.set_xticks([])
-    ax.set_yticks([])
-    for s in ax.spines.values():
-        s.set_visible(False)
-
-    if show_legend:
-        legend_families = [
-            ("classical", "Classical (Banister)"),
-            ("variable_dose", "Variable dose (Busso)"),
-            ("statistical_critique", "Statistical critique"),
-            ("bayesian_hier", "Bayesian hierarchical"),
-            ("review", "Review"),
-            ("extended", "Extension"),
-        ]
-        handles = [
-            mpatches.Patch(facecolor=FAMILY_COLOR[k], edgecolor="white", linewidth=0.4, label=v)
-            for k, v in legend_families
-        ]
-        handles.append(mpatches.Patch(facecolor=HALO_GOLD, alpha=0.5,
-                                      label="Banister lineage halo"))
-        leg = ax.legend(handles=handles, loc="lower right", framealpha=0.85,
-                        facecolor="#1a1f2e", edgecolor="#2a2f3d",
-                        labelcolor=FG, fontsize=9.5,
-                        title="The Banister Constellation",
-                        title_fontsize=11, borderpad=0.8)
-        leg.get_title().set_color(FG)
-        leg.get_title().set_fontweight("bold")
-
-    fig.text(0.5, 0.965, "The Banister Constellation",
-             ha="center", va="top", fontsize=18, fontweight="bold", color=FG)
-    fig.text(0.5, 0.935,
-             "50 years of fitness-fatigue model literature, anchored on Banister 1975 + Calvert 1976",
-             ha="center", va="top", fontsize=10.5, color="#9aa3b8")
-
-    plt.subplots_adjust(left=0.05, right=0.97, top=0.92, bottom=0.03)
     OUT.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, facecolor=BG, dpi=dpi, bbox_inches="tight",
-                pad_inches=0.2)
+    fig.savefig(out_path, facecolor=BG, dpi=DPI)  # fixed canvas: exact pixel size
     plt.close(fig)
-    print(f"wrote {out_path} ({out_path.stat().st_size:,} bytes)")
+    print(f"wrote {out_path} ({out_path.stat().st_size:,} bytes; "
+          f"{len(texts)} labels, {overlaps} label overlaps)")
 
 
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
-    render(OUT / "citation_network.png", w_in=16, h_in=12, dpi=120)
-    render(OUT / "citation_network_card.png", w_in=12, h_in=6.3, dpi=120,
-           show_legend=False, show_labels=False)
-    render(OUT / "citation_network_card_labeled.png", w_in=12, h_in=6.3, dpi=120,
-           show_legend=False, show_labels=True)
+    render(OUT / "citation_network.png", "hero", "lineage_top8")
+    render(OUT / "citation_network_tile.png", "tile", "anchor")
+    render(OUT / "citation_network_card.png", "card", "none")
+    render(OUT / "citation_network_card_labeled.png", "card", "lineage")
 
 
 if __name__ == "__main__":
