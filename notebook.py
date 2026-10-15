@@ -1,4 +1,11 @@
-"""getpaid citation network — interactive marimo notebook.
+# Notebook-level marimo config: force the dark theme so the page matches the
+# dark vis-network canvas. Without it the export defaults to "system", and a
+# visitor on a light OS sees dark viz cells on a white page.
+# /// script
+# [tool.marimo.display]
+# theme = "dark"
+# ///
+"""The Banister Constellation: interactive marimo notebook.
 
 A constellation view of the fitness-fatigue model (FFM) literature lineage,
 anchored by Banister 1975 + Calvert 1976. Reads pre-extracted nodes/edges
@@ -14,8 +21,10 @@ import marimo
 __generated_with = "0.23.0"
 app = marimo.App(
     width="full",
-    app_title="getpaid: FFM citation network",
+    app_title="The Banister Constellation",
     css_file=None,
+    # Loading overlay for the 30-60 s Pyodide cold start (removed once the first cell renders).
+    html_head_file="deploy/loading_head.html",
 )
 
 
@@ -38,11 +47,12 @@ def _(mo):
         ### A citation network of the fitness-fatigue model lineage
 
         Every node is a paper. Every edge is a citation. The trunk runs from **Banister 1975** and
-        **Calvert 1976** — the founding equations of the FFM family — out through five decades
-        of variants, critiques, and Bayesian extensions. **Gold halos** mark the direct
-        Banister lineage. Hover for details; drag to pan; scroll to zoom.
+        **Calvert 1976**, the founding equations of the FFM family, out through five decades
+        of variants, critiques, and Bayesian extensions. **White rings** mark the direct
+        Banister lineage. Hover for details; drag to pan; scroll to zoom. Best on a desktop:
+        on a touch screen, drag to pan and pinch to zoom.
 
-        Built from the `getpaid` literature pipeline (DuckDB portfolio index → networkx → vis-network).
+        Built from a DuckDB literature index (networkx → vis-network).
         """
     )
     return
@@ -91,6 +101,15 @@ def _(mo, pd):
         nodes_df["extension_family"] = nodes_df["extension_family"].fillna("").astype(str)
     else:
         nodes_df["extension_family"] = ""
+
+    # Effective family drives color, shape, legend and the Families filter alike:
+    # the seed's own family, else the inferred extension_family. One-node
+    # families share the "other" slot.
+    def _eff(row):
+        _f = row["family"] if row["is_seed"] else (row["extension_family"].strip() or "extended")
+        return {"perpot": "other", "rt_specific": "other"}.get(_f, _f)
+
+    nodes_df["eff_family"] = nodes_df.apply(_eff, axis=1)
     return edges_df, nodes_df, vis_network_js
 
 
@@ -140,9 +159,16 @@ def _(mo, nodes_df):
     highlight_banister = mo.ui.switch(value=True, label="Highlight Banister lineage")
     only_banister = mo.ui.switch(value=False, label="Show only Banister lineage")
 
-    families = sorted(nodes_df["family"].unique())
+    _fam_names = {
+        "classical": "Classical", "variable_dose": "Variable dose", "other": "Other models",
+        "statistical_critique": "Statistical critique", "bayesian_hier": "Bayesian",
+        "review": "Review", "extended": "Other extensions",
+    }
+    _present = [_k for _k in _fam_names if _k in set(nodes_df["eff_family"])]
     family_filter = mo.ui.multiselect(
-        options=families, value=families, label="Families",
+        options={_fam_names[_k]: _k for _k in _present},
+        value=[_fam_names[_k] for _k in _present],
+        label="Families",
     )
 
     search = mo.ui.text(placeholder="search title / authors / label…", label="Find")
@@ -187,18 +213,20 @@ def _(
     _needle = (search.value or "").strip().lower()
 
     ANCHOR_DOIS = {"manual:banister1975", "10.1109/tsmc.1976.5409179"}
+    # Okabe-Ito + a vis-network shape per family; keep in sync with build_html.py.
     FAMILY_COLORS = {
-        "classical":            "#E64B35",
-        "variable_dose":        "#3C5488",
-        "perpot":               "#4DBBD5",
-        "rt_specific":          "#00A087",
-        "statistical_critique": "#F39B7F",
-        "bayesian_hier":        "#8491B4",
-        "review":               "#B09C85",
-        "extended":             "#7E6148",
-        "uncategorized":        "#999999",
+        "classical":            "#E69F00",
+        "variable_dose":        "#56B4E9",
+        "other":                "#CC79A7",
+        "statistical_critique": "#D55E00",
+        "bayesian_hier":        "#F0E442",
+        "review":               "#009E73",
     }
-    HALO_GOLD = "#FFC850"
+    FAMILY_SHAPES = {
+        "classical": "dot", "variable_dose": "square", "other": "triangleDown",
+        "statistical_critique": "triangle", "bayesian_hier": "diamond", "review": "hexagon",
+    }
+    LINEAGE = "#FFFFFF"
 
     def _esc(s):
         return (str(s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -238,7 +266,7 @@ def _(
             f" · family: <span style='color:#E8E8EA'>{_esc(fam)}</span></div>"
         )
         if is_lin:
-            bits.append("<div style='color:#FFC850;font-size:11px;margin-top:4px'><b>★ Banister lineage</b></div>")
+            bits.append("<div style='color:#FFFFFF;font-size:11px;margin-top:4px'><b>★ Banister lineage</b></div>")
         return "".join(bits)
 
     vis_nodes, vis_edges, lineage_ids = [], [], []
@@ -249,7 +277,7 @@ def _(
             continue
         if not (_yr_lo <= _y <= _yr_hi):
             continue
-        if _a.get("family") not in _fam_keep:
+        if _a.get("eff_family") not in _fam_keep:
             continue
         _cites = max(int(_a.get("citation_count", 0) or 0), 0)
         if _cites < min_cites.value:
@@ -264,9 +292,8 @@ def _(
         _is_anchor = _node in ANCHOR_DOIS
         _is_seed = bool(_a.get("is_seed"))
         _label = _a.get("label") or ""
-        _ext_fam = (_a.get("extension_family") or "").strip()
-        _effective_fam = _a.get("family") if _is_seed else (_ext_fam or "extended")
-        _base_hex = FAMILY_COLORS.get(_effective_fam if _effective_fam in FAMILY_COLORS else (_a.get("family") or "uncategorized"), "#999999")
+        _effective_fam = _a.get("eff_family") or "extended"
+        _base_hex = FAMILY_COLORS.get(_effective_fam, "#999999")
 
         _size = 10 + 22 * (math.log10(_cites + 1) / math.log10(2001))
         if _is_anchor: _size += 12
@@ -274,13 +301,14 @@ def _(
 
         if _is_seed:
             _fill = _base_hex
-            _border = HALO_GOLD if (_is_lin and highlight_banister.value) else "#FFFFFF"
+            # Lineage = white ring; other seeds ring in their own color so white stays unique.
+            _border = LINEAGE if (_is_lin and highlight_banister.value) else _base_hex
             _border_w = 4 if _is_anchor else (3 if (_is_lin and highlight_banister.value) else 1.6)
         else:
             _fill = _hex_to_rgba(_base_hex, 0.45)
             _border = _hex_to_rgba(_base_hex, 0.7)
             _border_w = 0.8
-        _shape = "star" if _is_anchor else "dot"
+        _shape = "star" if _is_anchor else FAMILY_SHAPES.get(_effective_fam, "dot")
 
         vis_nodes.append({
             "id": _node,
@@ -292,8 +320,8 @@ def _(
             "color": {
                 "background": _fill,
                 "border": _border,
-                "highlight": {"background": _base_hex, "border": HALO_GOLD},
-                "hover": {"background": _base_hex, "border": HALO_GOLD},
+                "highlight": {"background": _base_hex, "border": LINEAGE},
+                "hover": {"background": _base_hex, "border": LINEAGE},
             },
             "borderWidth": _border_w,
             "borderWidthSelected": _border_w + 1,
@@ -310,7 +338,7 @@ def _(
         if _eattrs.get("kind") == "manual":
             vis_edges.append({
                 "from": _u, "to": _v,
-                "color": {"color": "rgba(255,200,80,0.55)", "highlight": HALO_GOLD},
+                "color": {"color": "rgba(255,255,255,0.7)", "highlight": LINEAGE},
                 "width": 1.6, "smooth": {"type": "continuous"},
             })
         else:
@@ -336,33 +364,39 @@ html,body{margin:0;padding:0;background:#0E1117;color:#E8E8EA;font-family:Inter,
         border:1px solid #2a2f3d;border-radius:8px;padding:10px 12px;font-size:12px;
         line-height:1.55;max-width:240px;}
 #legend h4{margin:0 0 6px 0;font-size:13px;font-weight:600;}
-#legend .swatch{display:inline-block;width:10px;height:10px;border-radius:50%;
-                margin-right:6px;vertical-align:middle;}
+#legend svg{width:12px;height:12px;margin-right:6px;vertical-align:-1px;}
 .controls{position:fixed;top:12px;right:12px;z-index:10;background:rgba(20,24,33,0.85);
           border:1px solid #2a2f3d;border-radius:8px;padding:8px 10px;font-size:12px;}
 .controls button{background:#1a1f2e;color:#E8E8EA;border:1px solid #3a4156;
                  border-radius:4px;padding:4px 10px;cursor:pointer;font-family:inherit;
                  font-size:12px;margin-right:4px;}
-.controls button:hover{border-color:#FFC850;}
-.vis-tooltip{background:#1a1f2e!important;color:#E8E8EA!important;border:1px solid #FFC850!important;
+.controls button:hover{border-color:#FFFFFF;}
+@media (max-width:600px){
+  .controls{left:12px;right:12px;display:flex;gap:4px;padding:6px;}
+  .controls button{flex:1;margin:0;padding:6px 4px;min-height:32px;}
+  #legend{top:62px;right:12px;max-width:none;padding:8px 10px;font-size:11px;line-height:1.45;
+          column-count:2;column-gap:12px;}
+  #legend h4{column-span:all;}
+}
+.vis-tooltip{background:#1a1f2e!important;color:#E8E8EA!important;border:1px solid #5a6377!important;
              padding:8px 10px!important;font-family:inherit!important;font-size:12px!important;
              max-width:380px!important;border-radius:6px!important;}
 #year-axis{position:fixed;inset:0;pointer-events:none;z-index:1;}
 #year-axis .gridline{position:absolute;left:0;right:0;height:1px;background:rgba(80,90,110,0.18);}
 #year-axis .label{position:absolute;left:8px;transform:translateY(-50%);
-                  color:#6a7185;font-size:11px;font-family:inherit;
+                  color:#aab2c4;font-size:11px;font-family:inherit;
                   background:rgba(14,17,23,0.7);padding:1px 6px;border-radius:3px;}
 </style></head><body>
 <div id="legend">
 <h4>The Banister Constellation</h4>
-<div><span class="swatch" style="background:#E64B35"></span>classical</div>
-<div><span class="swatch" style="background:#3C5488"></span>variable_dose</div>
-<div><span class="swatch" style="background:#F39B7F"></span>statistical_critique</div>
-<div><span class="swatch" style="background:#8491B4"></span>bayesian_hier</div>
-<div><span class="swatch" style="background:#B09C85"></span>review</div>
-<div><span class="swatch" style="background:#7E6148"></span>extended</div>
-<div style="margin-top:6px;"><span style="border:2px solid #FFC850;display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;"></span>Banister lineage</div>
-<div>★ founding equations</div>
+<div><svg viewBox="0 0 12 12" aria-hidden="true" fill="#E69F00"><circle cx="6" cy="6" r="5"/></svg>Classical</div>
+<div><svg viewBox="0 0 12 12" aria-hidden="true" fill="#56B4E9"><rect x="1" y="1" width="10" height="10"/></svg>Variable dose</div>
+<div><svg viewBox="0 0 12 12" aria-hidden="true" fill="#CC79A7"><polygon points="1,1 11,1 6,11"/></svg>Other models</div>
+<div><svg viewBox="0 0 12 12" aria-hidden="true" fill="#D55E00"><polygon points="6,1 11,11 1,11"/></svg>Statistical critique</div>
+<div><svg viewBox="0 0 12 12" aria-hidden="true" fill="#F0E442"><polygon points="6,0.5 11.5,6 6,11.5 0.5,6"/></svg>Bayesian</div>
+<div><svg viewBox="0 0 12 12" aria-hidden="true" fill="#009E73"><polygon points="3,1 9,1 12,6 9,11 3,11 0,6"/></svg>Review</div>
+<div><svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="#FFFFFF" stroke-width="2"/></svg>Banister lineage</div>
+<div><svg viewBox="0 0 12 12" aria-hidden="true" fill="#FFFFFF"><polygon points="6,0.5 7.5,4.5 11.5,4.6 8.3,7.1 9.4,11.2 6,8.8 2.6,11.2 3.7,7.1 0.5,4.6 4.5,4.5"/></svg>Founding equations</div>
 </div>
 <div class="controls">
 <button onclick="lineageOnly()">Lineage only</button>
@@ -477,7 +511,7 @@ def _(G, mo, nodes_df, only_banister, year_range):
         <div style="display:flex; gap:2rem; padding:1rem 0; color:#888; font-size:0.92rem">
             <span><b style="color:#E8E8EA">{_n_total}</b> papers visible</span>
             <span><b style="color:#E8E8EA">{_n_seeds}</b> curated seeds</span>
-            <span><b style="color:#FFC850">{_n_lineage}</b> in Banister lineage</span>
+            <span><b style="color:#FFFFFF">{_n_lineage}</b> in Banister lineage</span>
             <span><b style="color:#E8E8EA">{_n_edges_total}</b> citation edges in full graph</span>
         </div>
         """
@@ -491,16 +525,18 @@ def _(mo):
         r"""
         ---
         ### Legend
-        - **Stars** — Banister 1975 / Calvert 1976 (the founding equations).
-        - **Larger nodes** — curated seed papers from the canonical FFM lineage.
-        - **Gold halo** — directly descended from Banister via the manually-curated parent_doi tree.
-        - **Gold edges** — manually-asserted lineage links (parent_doi).
-        - **Faint edges** — automatically-discovered citations from Semantic Scholar / CrossRef.
-        - **Node size** — log10(citation count).
-        - **Node color** — methodological family (classical, variable-dose, statistical critique, Bayesian, …).
+        - **Stars:** Banister 1975 and Calvert 1976, the founding equations.
+        - **Larger nodes:** curated seed papers from the canonical FFM lineage.
+        - **White ring:** directly descended from Banister via the manually curated parent_doi tree.
+        - **White edges:** manually asserted lineage links (parent_doi).
+        - **Faint edges:** automatically discovered citations from Semantic Scholar and CrossRef.
+        - **Node size:** log10(citation count).
+        - **Node color and shape:** methodological family. Classical (circle), variable dose (square),
+          other models (down triangle), statistical critique (triangle), Bayesian (diamond), review (hexagon).
+          The palette is Okabe-Ito, and the shapes keep families distinguishable without color.
 
-        Data extracted from the `getpaid` literature pipeline DuckDB (Semantic Scholar forward
-        citations + CrossRef references + manually-curated FFM seeds). See `extract.py`.
+        Data extracted from a DuckDB literature index (Semantic Scholar forward citations, CrossRef
+        references, and manually curated FFM seeds). See `extract.py`.
         """
     )
     return
