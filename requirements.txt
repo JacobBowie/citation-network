@@ -12,6 +12,7 @@ networkx>=3.0
 
 # Static-PNG renderer (host-side only; not bundled into the WASM kernel).
 matplotlib>=3.7
+adjustText>=1.2
 
 # Refresh-only — used by extract.py against the private portfolio.duckdb.
 # Safe to omit when building from committed CSVs (pass --skip-extract

@@ -61,6 +61,7 @@ jobs:
             citation-network-wasm.tar.gz
             citation-network-standalone.tar.gz
             dist_static/citation_network.png
+            dist_static/citation_network_tile.png
             dist_static/citation_network_card.png
             dist_static/citation_network_card_labeled.png
           generate_release_notes: true
