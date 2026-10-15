@@ -8,6 +8,8 @@
 #   --skip-extract    skip the DuckDB refresh step; build from committed
 #                     public/data/{nodes,edges}.csv. Required for CI on a
 #                     fresh checkout (no private DB available).
+#
+# Without --skip-extract, set CN_SEEDS_CSV and CN_DB_PATH (see extract.py).
 
 set -euo pipefail
 
@@ -41,6 +43,9 @@ python -m marimo export html-wasm notebook.py \
     -o dist \
     --mode run \
     --no-show-code
+# marimo ships a generic AI-assistant CLAUDE.md with every WASM export; it is
+# not part of this notebook, so keep it off the public site.
+rm -f dist/CLAUDE.md
 
 echo "→ Building standalone HTML to dist/standalone.html ..."
 python build_html.py --out dist/standalone.html

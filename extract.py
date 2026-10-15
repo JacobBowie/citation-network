@@ -17,15 +17,16 @@ from __future__ import annotations
 import argparse
 import csv
 import math
+import os
 import sys
 from collections import defaultdict
 from pathlib import Path
 
 import duckdb
 
-ROOT = Path(__file__).resolve().parents[2]
-SEEDS_CSV = ROOT / "data" / "lineage_figure" / "canonical_ffm_seeds.csv"
-DB_PATH = ROOT.parent / "_references" / "portfolio.duckdb"
+# The seeds list and the literature-index DuckDB live outside this repo, so
+# they are passed in (--seeds / --db, or CN_SEEDS_CSV / CN_DB_PATH) rather than
+# resolved from a hardcoded relative layout that breaks when the repo moves.
 OUT_DIR = Path(__file__).resolve().parent / "public" / "data"
 
 BANISTER_ANCHORS = {"manual:banister1975", "10.1109/tsmc.1976.5409179"}
@@ -277,20 +278,29 @@ def main(argv=None):
     ap.add_argument("--top-k", type=int, default=150,
                     help="extension nodes (most-linked to trunk) to include")
     ap.add_argument("--out-dir", type=Path, default=OUT_DIR)
+    ap.add_argument("--seeds", type=Path, default=os.environ.get("CN_SEEDS_CSV"),
+                    help="canonical_ffm_seeds.csv (default: $CN_SEEDS_CSV)")
+    ap.add_argument("--db", type=Path, default=os.environ.get("CN_DB_PATH"),
+                    help="literature-index DuckDB, opened read-only (default: $CN_DB_PATH)")
     args = ap.parse_args(argv)
+    for flag, env, path in (("--seeds", "CN_SEEDS_CSV", args.seeds), ("--db", "CN_DB_PATH", args.db)):
+        if path is None:
+            ap.error(f"{flag} is required (or set {env})")
+        if not path.exists():
+            ap.error(f"{flag}: no such file: {path}")
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    print(f"[extract] DB: {DB_PATH}")
-    print(f"[extract] seeds: {SEEDS_CSV}")
+    print(f"[extract] DB: {args.db}")
+    print(f"[extract] seeds: {args.seeds}")
     print(f"[extract] out: {args.out_dir}")
 
-    seeds = load_seeds(SEEDS_CSV)
+    seeds = load_seeds(args.seeds)
     print(f"[extract] {len(seeds)} curated seeds")
 
     lineage = banister_lineage(seeds)
     print(f"[extract] {len(lineage)} nodes in Banister lineage (via parent_doi chains)")
 
-    con = duckdb.connect(str(DB_PATH), read_only=True)
+    con = duckdb.connect(str(args.db), read_only=True)
 
     seed_dois = [s["doi"] for s in seeds]
     seed_cites = fetch_seed_citation_counts(con, seed_dois)
