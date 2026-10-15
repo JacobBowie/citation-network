@@ -23,6 +23,7 @@ Usage:
 from __future__ import annotations
 
 import csv
+import io
 import math
 from pathlib import Path
 
@@ -34,6 +35,7 @@ import numpy as np  # noqa: E402
 from adjustText import adjust_text  # noqa: E402
 from matplotlib.collections import LineCollection  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
+from PIL import Image  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "public" / "data"
@@ -210,6 +212,43 @@ def _labeled(nodes: list[dict], mode: str) -> list[dict]:
     return []
 
 
+def _rgb(hex_str: str) -> tuple[int, int, int]:
+    return tuple(int(hex_str[i:i + 2], 16) for i in (1, 3, 5))
+
+
+def _blend(hex_str: str, alpha: float) -> tuple[int, int, int]:
+    return tuple(round(alpha * f + (1 - alpha) * b) for f, b in zip(_rgb(hex_str), _rgb(BG)))
+
+
+def _reserved_colors() -> list[tuple[int, int, int]]:
+    """Exact colors the palette must keep. Median cut alone drops the rare
+    ones: in testing, the single Bayesian node's yellow merged into orange."""
+    cols = [_rgb(h) for h in (BG, FG, LABEL_INK, MUTED, GRID, LINEAGE, *FAMILY_COLOR.values())]
+    cols += [_blend(h, 0.72) for h in FAMILY_COLOR.values()]  # extension-node fills
+    cols.append(_blend(LINEAGE, 0.16))                        # lineage halo
+    return list(dict.fromkeys(cols))
+
+
+def _save_png(fig, out_path: Path) -> None:
+    """Save at the exact canvas size, then quantize to a 256-color palette:
+    the reserved encoding colors plus median-cut colors for the rest, mapped
+    without dithering so edges stay crisp. Flat colors on a dark canvas
+    compress to well under half the size. Deterministic, so CI reproduces it."""
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", facecolor=BG, dpi=DPI)  # fixed canvas: exact pixel size
+    buf.seek(0)
+    with Image.open(buf) as im:
+        rgb = im.convert("RGB")
+    keep = _reserved_colors()
+    n_free = 256 - len(keep)
+    adaptive = rgb.quantize(colors=n_free, method=Image.Quantize.MEDIANCUT,
+                            dither=Image.Dither.NONE).getpalette()[: 3 * n_free]
+    palette = [v for c in keep for v in c] + adaptive
+    pal_img = Image.new("P", (1, 1))
+    pal_img.putpalette(palette + [0] * (768 - len(palette)))
+    rgb.quantize(palette=pal_img, dither=Image.Dither.NONE).save(out_path, format="PNG", optimize=True)
+
+
 def render(out_path: Path, kind: str, labels: str) -> None:
     sp = SPECS[kind]
     W, H = sp["W"], sp["H"]
@@ -306,7 +345,7 @@ def render(out_path: Path, kind: str, labels: str) -> None:
                    fontsize=sp["legend"], labelcolor=FG, handletextpad=0.3, columnspacing=1.1)
 
     OUT.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, facecolor=BG, dpi=DPI)  # fixed canvas: exact pixel size
+    _save_png(fig, out_path)
     plt.close(fig)
     print(f"wrote {out_path} ({out_path.stat().st_size:,} bytes; "
           f"{len(texts)} labels, {overlaps} label overlaps)")
