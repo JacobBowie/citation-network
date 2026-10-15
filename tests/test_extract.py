@@ -96,6 +96,20 @@ def test_no_self_edges(edges):
     assert not bad, f"self-edges found: {bad}"
 
 
+def test_every_lineage_paper_links_to_its_parent(nodes, edges):
+    """Each lineage paper except the root (Banister 1975) has its curated
+    parent_doi link drawn as a manual edge. Guards the extract.py dedup order:
+    when citation edges won the dedup, a fuller index silently turned lineage
+    links into ordinary citations and broke the chain."""
+    has_parent_link = {e["source"] for e in edges if e["kind"] == "manual"}
+    missing = [
+        n["label"] for n in nodes
+        if _to_bool(n["is_banister_lineage"]) and n["doi"] != "manual:banister1975"
+        and n["doi"] not in has_parent_link
+    ]
+    assert not missing, f"lineage papers without a manual parent edge: {missing}"
+
+
 def test_lineage_implies_seed(nodes):
     """is_banister_lineage=True is only set on curated seed papers — extensions
     are auto-discovered and not part of the curated trunk."""

@@ -373,9 +373,12 @@ def main(argv=None):
             manual_edges.append((s["doi"], s["parent_doi"], "manual"))
     print(f"[extract] {len(manual_edges)} manual lineage edges from seeds")
 
+    # Manual lineage edges go first so they win the dedup below. When the index
+    # also records the same citation, the pair must stay "manual"; with auto
+    # edges first, a more complete index silently erased lineage links.
     edge_set = set()
     edges = []
-    for src, dst, kind in list(auto_edges) + manual_edges:
+    for src, dst, kind in manual_edges + list(auto_edges):
         key = (src, dst)
         if key in edge_set or src == dst:
             continue
