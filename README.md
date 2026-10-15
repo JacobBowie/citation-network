@@ -134,7 +134,7 @@ See [`LICENSE`](LICENSE) for full text.
   author = {Bowie, Jacob},
   title  = {The Banister Constellation: a citation network of the fitness-fatigue model lineage},
   year   = {2026},
-  version = {0.1.0},
+  version = {0.1.1},
   url    = {https://github.com/JacobBowie/citation-network}
 }
 ```
